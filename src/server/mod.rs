@@ -685,4 +685,59 @@ mod tests {
             "both operations have finished, so the device is no longer connecting"
         );
     }
+
+    use super::setup::tests::{get, header, plain_router, send};
+    use http::StatusCode;
+    use http::header::LOCATION;
+
+    /// The device setup page moved to the path the Management API gives it;
+    /// a client that followed a link to the old one is sent there.
+    #[tokio::test]
+    async fn the_old_device_setup_path_redirects_to_the_specifications_path() {
+        let (status, headers, _) = get(&plain_router(), "/api/v1/safetymonitor/0/setup").await;
+        assert_eq!(status, StatusCode::PERMANENT_REDIRECT);
+        assert_eq!(
+            header(&headers, &LOCATION),
+            "/setup/v1/safetymonitor/0/setup"
+        );
+    }
+
+    /// The API Reference's status-code examples answer "Camera device 1 does
+    /// not exist" with 400.
+    #[tokio::test]
+    async fn an_unknown_device_number_on_the_action_route_answers_400() {
+        let (status, _, body) = get(&plain_router(), "/api/v1/safetymonitor/1/connected").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains("not found"), "the body names the gap: {body}");
+    }
+
+    /// The API Reference's status-code examples answer "'`CanSlew`' is not a
+    /// valid Camera command" with 400.
+    #[tokio::test]
+    async fn an_unknown_method_on_the_action_route_answers_400() {
+        let (status, _, body) = get(&plain_router(), "/api/v1/safetymonitor/0/canslew").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body.contains("Unknown action"),
+            "the body names the gap: {body}"
+        );
+    }
+
+    /// A missing parameter is a 400 as well, as it always was.
+    #[tokio::test]
+    async fn a_missing_parameter_on_the_action_route_answers_400() {
+        let (status, _, body) = send(
+            &plain_router(),
+            "PUT",
+            "/api/v1/safetymonitor/0/connected",
+            Some("application/x-www-form-urlencoded"),
+            "",
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body.contains("Connected"),
+            "the body names the parameter: {body}"
+        );
+    }
 }

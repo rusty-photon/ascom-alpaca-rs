@@ -209,7 +209,7 @@ fn escape_html(text: &str) -> String {
 }
 
 #[cfg(all(test, feature = "safety_monitor"))]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::api::{Device, SafetyMonitor, ServerInfo};
     use crate::{ASCOMResult, Server};
@@ -357,14 +357,14 @@ mod tests {
     }
 
     /// A router serving one plain monitor as device 0.
-    fn plain_router() -> Router {
+    pub(in crate::server) fn plain_router() -> Router {
         let mut server = Server::new(server_info());
         server.devices.register(PlainMonitor);
         server.into_router_inner()
     }
 
     /// One request through the router.
-    async fn send(
+    pub(in crate::server) async fn send(
         router: &Router,
         method: &str,
         uri: &str,
@@ -402,7 +402,10 @@ mod tests {
         )
     }
 
-    async fn get(router: &Router, uri: &str) -> (StatusCode, HeaderMap, String) {
+    pub(in crate::server) async fn get(
+        router: &Router,
+        uri: &str,
+    ) -> (StatusCode, HeaderMap, String) {
         send(router, "GET", uri, None, "").await
     }
 
@@ -417,7 +420,10 @@ mod tests {
         .await
     }
 
-    fn header<'headers>(headers: &'headers HeaderMap, name: &HeaderName) -> &'headers str {
+    pub(in crate::server) fn header<'headers>(
+        headers: &'headers HeaderMap,
+        name: &HeaderName,
+    ) -> &'headers str {
         headers
             .get(name)
             .unwrap_or_else(|| panic!("no {name} header"))
