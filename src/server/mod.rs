@@ -16,6 +16,9 @@ mod response;
 #[macro_use]
 mod setup_page;
 
+mod setup;
+pub use setup::{ServerSetup, SetupRequest, SetupResponse};
+
 mod transaction;
 pub(crate) use transaction::*;
 
@@ -29,18 +32,17 @@ use crate::api::{CargoServerInfo, DeviceType, ServerInfo};
 use crate::discovery::DEFAULT_DISCOVERY_PORT;
 use crate::response::ValueResponse;
 use axum::extract::{FromRequest, Path, Request};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::{Router, routing};
 use bytes::Bytes;
 use fnv::FnvHashMap;
 use futures::future::{BoxFuture, FutureExt};
-use http::StatusCode;
+use http::Method;
 use http_body::Body as HttpBody;
 use http_body_util::BodyExt;
 use http_body_util::combinators::UnsyncBoxBody;
 use serde::Deserialize;
 use socket2::{Domain, Protocol, Socket, Type};
-use std::collections::BTreeMap;
 use std::collections::hash_map::Entry;
 use std::convert::Infallible;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
@@ -66,6 +68,12 @@ pub struct Server {
     /// Defaults to `Some(32227)`. Set to `None` to disable the discovery server
     /// (useful in tests or environments where discovery is not needed).
     pub discovery_port: Option<u16>,
+    /// The handler behind the whole-server setup page, `/setup`.
+    ///
+    /// Defaults to `None`: the page then lists the registered devices, each
+    /// linked to its own setup page, and answers a `POST` with `405`. See
+    /// [`ServerSetup`].
+    pub setup: Option<Arc<dyn ServerSetup>>,
 }
 
 impl Server {
@@ -85,6 +93,7 @@ impl Server {
             info,
             listen_addr: SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
             discovery_port: Some(DEFAULT_DISCOVERY_PORT),
+            setup: None,
         }
     }
 }
@@ -329,6 +338,7 @@ impl Server {
     fn into_router_inner(self) -> Router {
         let devices = Arc::new(self.devices);
         let server_info = Arc::new(self.info);
+        let setup = self.setup;
         let connecting_devices = Arc::new(RwLock::new(FnvHashMap::default()));
 
         Router::new()
@@ -359,28 +369,50 @@ impl Server {
                     })
                 })
             })
+            // The two HTML pages the Management API defines, for `GET` and
+            // `POST`: the whole-server page and one page per device.
             .route("/setup", {
-                let this = Arc::clone(&devices);
+                let devices = Arc::clone(&devices);
                 let server_info = Arc::clone(&server_info);
 
-                routing::get(async move || {
-                    let mut setup_page = setup_page::SetupPage {
-                        server_info: &server_info,
-                        grouped_devices: BTreeMap::new(),
-                    };
+                let page = move |request: SetupRequest| {
+                    let devices = Arc::clone(&devices);
+                    let server_info = Arc::clone(&server_info);
+                    let setup = setup.clone();
 
-                    for (device, number) in this.iter_all() {
-                        let device = device.to_configured_device(number);
-
-                        setup_page
-                            .grouped_devices
-                            .entry(device.ty)
-                            .or_default()
-                            .push((number, device.name));
+                    async move {
+                        match setup {
+                            Some(setup) => setup.setup_request(request).await,
+                            None if request.method == Method::POST => {
+                                SetupResponse::method_not_allowed()
+                            }
+                            None => SetupResponse::html(setup_page::render(&server_info, &devices)),
+                        }
                     }
+                };
 
-                    Html(setup_page.to_string())
-                })
+                routing::get(page.clone()).post(page)
+            })
+            .route("/setup/v1/{device_type}/{device_number}/setup", {
+                let devices = Arc::clone(&devices);
+
+                let page = move |Path((device_type, device_number)): Path<(String, String)>,
+                                 request: SetupRequest| {
+                    let devices = Arc::clone(&devices);
+
+                    async move {
+                        let device = setup::device_type_from_path(&device_type)
+                            .zip(device_number.parse::<usize>().ok())
+                            .and_then(|(ty, number)| devices.get_device_for_server(ty, number).ok());
+
+                        match device {
+                            Some(device) => device.setup_request(request).await,
+                            None => setup::unsupported_device(&device_type, &device_number),
+                        }
+                    }
+                };
+
+                routing::get(page.clone()).post(page)
             })
             .route(
                 "/api/v1/{device_type}/{device_number}/{action}",
@@ -422,19 +454,13 @@ impl Server {
                             }
                         }
 
-                        // Setup endpoint is not an ASCOM method, so doesn't need the transaction and ASCOMResult wrapping.
+                        // The device setup page lives on the path the Management API gives it;
+                        // a client that followed a link to the old one is sent there.
                         if action == "setup" {
-                            return match devices
-                                .get_device_for_server(device_type, device_number)?
-                                .setup()
-                                .await
-                            {
-                                Ok(html) => Ok(Html(html).into_response()),
-                                Err(err) => {
-                                    Err((StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}"))
-                                        .into())
-                                }
-                            };
+                            return Ok(Redirect::permanent(&format!(
+                                "/setup/v1/{device_type}/{device_number}/setup"
+                            ))
+                            .into_response());
                         }
 
                         // Handle Platform 7 connection methods.
@@ -486,8 +512,7 @@ impl Server {
 mod tests {
     use super::*;
     use crate::ASCOMResult;
-    use crate::api::Device;
-    use crate::api::{SafetyMonitor, ServerInfo};
+    use crate::api::{Device, SafetyMonitor, ServerInfo};
     use axum::body::Body;
     use http::Request;
     use http_body_util::BodyExt;

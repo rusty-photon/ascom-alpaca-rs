@@ -1,3 +1,4 @@
+use crate::Devices;
 use crate::api::{DeviceType, ServerInfo};
 use crate::server::CargoServerInfo;
 use std::collections::BTreeMap;
@@ -104,6 +105,27 @@ pub(super) struct SetupPage<'ctx> {
     pub grouped_devices: BTreeMap<DeviceType, Vec<(usize, String)>>,
 }
 
+/// The default `/setup` page: the registered devices, grouped by type, each
+/// linked to its own setup page.
+pub(super) fn render(server_info: &ServerInfo, devices: &Devices) -> String {
+    let mut setup_page = SetupPage {
+        server_info,
+        grouped_devices: BTreeMap::new(),
+    };
+
+    for (device, number) in devices.iter_all() {
+        let device = device.to_configured_device(number);
+
+        setup_page
+            .grouped_devices
+            .entry(device.ty)
+            .or_default()
+            .push((number, device.name));
+    }
+
+    setup_page.to_string()
+}
+
 fn group_to_html(group_ty: DeviceType, group: &[(usize, String)]) -> impl Display {
     html!(
         figure,
@@ -138,7 +160,7 @@ fn group_to_html(group_ty: DeviceType, group: &[(usize, String)]) -> impl Displa
                 li,
                 html!(
                     a {
-                        href: format_args!("/api/v1/{group_ty}/{number}/setup")
+                        href: format_args!("/setup/v1/{group_ty}/{number}/setup")
                     },
                     name
                 )

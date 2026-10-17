@@ -17,12 +17,42 @@ macro_rules! rpc_trait {
         ///
         /// Web page user interface that enables device specific configuration to be set for each available device.
         ///
-        /// The server should implement this to return HTML string. You can use [`Self::action`] to store the configuration.
+        /// The server serves it at `/setup/v1/{device_type}/{device_number}/setup`. Implement this to return
+        /// an HTML string for a page that only shows settings; a page that also takes them implements
+        /// `setup_request` instead, which sees the request's method, query and form body.
         ///
         /// Note: on the client side you almost never want to just retrieve HTML to show it in the browser, as that breaks relative URLs.
-        /// Use the `/{device_type}/{device_number}/setup` URL instead.
+        /// Use the `/setup/v1/{device_type}/{device_number}/setup` URL instead.
         fn setup(&self) -> futures::future::BoxFuture<'_, eyre::Result<String>> {
             Box::pin(futures::future::ok(include_str!("../server/device_setup_template.html").to_owned()))
+        }
+
+        /// ```rust,no_run
+        /// # use ascom_alpaca::{SetupRequest, SetupResponse};
+        /// # use futures::future::BoxFuture;
+        /// fn setup_request(&self, request: SetupRequest) -> BoxFuture<'_, SetupResponse>
+        /// # { unimplemented!() }
+        /// ```
+        ///
+        /// Answer a `GET` or `POST` on this device's setup page, `/setup/v1/{device_type}/{device_number}/setup`.
+        ///
+        /// The default answers a `GET` with [`Self::setup`] and a `POST` with `405 Method Not Allowed`. A device
+        /// with settings to take overrides this: render the form on `GET`, read [`SetupRequest::form`] on `POST`,
+        /// and answer with the page again or with a [`SetupResponse::see_other`] back to it.
+        #[cfg(feature = "server")]
+        fn setup_request(&self, request: $crate::SetupRequest) -> futures::future::BoxFuture<'_, $crate::SetupResponse> {
+            Box::pin(async move {
+                if request.method == ::http::Method::POST {
+                    return $crate::SetupResponse::method_not_allowed();
+                }
+                match self.setup().await {
+                    Ok(html) => $crate::SetupResponse::html(html),
+                    Err(err) => $crate::SetupResponse::text(
+                        ::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("{err:#}"),
+                    ),
+                }
+            })
         }
     };
     (@extras $trait_name:ident trait) => {
@@ -47,9 +77,18 @@ macro_rules! rpc_trait {
 
         fn setup(&self) -> futures::future::BoxFuture<'_, eyre::Result<String>> {
             Box::pin(async move {
+                // The device's URL is `{server}/api/v1/{device_type}/{device_number}/`; its
+                // setup page is at `{server}/setup/v1/{device_type}/{device_number}/setup`.
+                let device_url = &self.inner.base_url;
+                let (server_path, device_path) = device_url
+                    .path()
+                    .rsplit_once("/api/v1/")
+                    .ok_or_else(|| eyre::eyre!("device URL {device_url} is not under /api/v1/"))?;
+                let mut setup_url = device_url.clone();
+                setup_url.set_path(&format!("{server_path}/setup/v1/{device_path}setup"));
                 Ok(
                     self.inner.http
-                        .get(self.inner.base_url.join("setup")?)
+                        .get(setup_url)
                         .send()
                         .await?
                         .text()

@@ -294,3 +294,55 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(all(test, feature = "server", feature = "safety_monitor"))]
+mod setup_tests {
+    use super::*;
+    use crate::api::TypedDevice;
+
+    /// The device's setup page is fetched from the path the Management API
+    /// gives it, under the server's own path prefix.
+    #[tokio::test]
+    async fn a_device_client_fetches_the_setup_page_from_its_specified_path() -> eyre::Result<()> {
+        let app = axum::Router::new()
+            .route(
+                "/observatory/management/v1/configureddevices",
+                axum::routing::get(async || {
+                    axum::Json(serde_json::json!({
+                        "ServerTransactionID": 1_u32,
+                        "ErrorNumber": 0_u32,
+                        "ErrorMessage": "",
+                        "Value": [{
+                            "DeviceName": "Roof",
+                            "DeviceType": "SafetyMonitor",
+                            "DeviceNumber": 0_u32,
+                            "UniqueID": "roof"
+                        }]
+                    }))
+                }),
+            )
+            .route(
+                "/observatory/setup/v1/safetymonitor/0/setup",
+                axum::routing::get(async || axum::response::Html("<p>the page</p>")),
+            )
+            .fallback(async |req: axum::extract::Request| {
+                (
+                    http::StatusCode::NOT_FOUND,
+                    format!("unexpected request for {}", req.uri()),
+                )
+            });
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let _server = tokio::spawn(axum::serve(listener, app).into_future());
+
+        let client = Client::new(format!("http://{addr}/observatory/"))?;
+        let mut devices = client.get_devices().await?;
+        let Some(TypedDevice::SafetyMonitor(roof)) = devices.next() else {
+            eyre::bail!("expected the one safety monitor");
+        };
+        let page = roof.setup().await?;
+        eyre::ensure!(page == "<p>the page</p>", "unexpected page: {page:?}");
+        Ok(())
+    }
+}

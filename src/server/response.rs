@@ -59,12 +59,14 @@ where
             }) => Ok(Err(ASCOMError::invalid_value(format!(
                 "Parameter {name:?}: {msg}"
             )))),
-            Err(err @ (Error::MissingParameter { .. } | Error::BadParameter { .. })) => {
-                Err((StatusCode::BAD_REQUEST, err.to_string()))
-            }
-            Err(err @ (Error::UnknownDeviceNumber { .. } | Error::UnknownAction { .. })) => {
-                Err((StatusCode::NOT_FOUND, err.to_string()))
-            }
+            // An unknown device number or action is a 400 like a bad parameter:
+            // see `Error::into_response`.
+            Err(
+                err @ (Error::MissingParameter { .. }
+                | Error::BadParameter { .. }
+                | Error::UnknownDeviceNumber { .. }
+                | Error::UnknownAction { .. }),
+            ) => Err((StatusCode::BAD_REQUEST, err.to_string())),
         }
         .map(|ascom_result| ResponseWithTransaction {
             transaction: self.transaction,

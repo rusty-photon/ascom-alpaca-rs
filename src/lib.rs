@@ -382,7 +382,9 @@ pub use client::Client;
 #[cfg(feature = "server")]
 mod server;
 #[cfg(feature = "server")]
-pub use server::{AlpacaService, BoundServer, BoxError, Server};
+pub use server::{
+    AlpacaService, BoundServer, BoxError, Server, ServerSetup, SetupRequest, SetupResponse,
+};
 
 pub mod discovery;
 

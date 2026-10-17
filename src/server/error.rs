@@ -31,9 +31,16 @@ pub(crate) enum Error {
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
+        // A device number the server does not have and an action the device
+        // does not know are both "the device couldn't interpret the request":
+        // the API Reference's status-code examples answer "Camera device 1
+        // does not exist" and "'CanSlew' is not a valid Camera command" with
+        // 400, alongside a missing or malformed parameter.
         let code = match self {
-            Self::UnknownDeviceNumber { .. } | Self::UnknownAction { .. } => StatusCode::NOT_FOUND,
-            Self::MissingParameter { .. } | Self::BadParameter { .. } => StatusCode::BAD_REQUEST,
+            Self::UnknownDeviceNumber { .. }
+            | Self::UnknownAction { .. }
+            | Self::MissingParameter { .. }
+            | Self::BadParameter { .. } => StatusCode::BAD_REQUEST,
             Self::Ascom(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (code, format!("{self:#}")).into_response()
