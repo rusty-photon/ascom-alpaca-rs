@@ -167,3 +167,37 @@ impl FromIterator<TypedDevice> for Devices {
         devices
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::DeviceType;
+
+    #[cfg(feature = "camera")]
+    #[test]
+    fn a_device_type_is_matched_without_regard_to_case() -> eyre::Result<()> {
+        for spelling in ["Camera", "camera", "CAMERA", "cAMERA"] {
+            let parsed: DeviceType = serde_json::from_str(&format!("{spelling:?}"))?;
+            eyre::ensure!(
+                parsed == DeviceType::Camera,
+                "{spelling:?} parsed as {parsed:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_unknown_device_type_is_an_error_naming_it() -> eyre::Result<()> {
+        let Err(err) = serde_json::from_str::<DeviceType>("\"toaster\"") else {
+            eyre::bail!("an unknown device type parsed");
+        };
+        eyre::ensure!(err.to_string().contains("toaster"), "{err}");
+        Ok(())
+    }
+
+    #[cfg(feature = "camera")]
+    #[test]
+    fn a_device_type_still_serializes_as_its_variant_name() -> eyre::Result<()> {
+        eyre::ensure!(serde_json::to_string(&DeviceType::Camera)? == "\"Camera\"");
+        Ok(())
+    }
+}

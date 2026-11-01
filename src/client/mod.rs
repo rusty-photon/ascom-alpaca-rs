@@ -293,6 +293,45 @@ mod tests {
         );
         Ok(())
     }
+
+    /// A server may list a device's type in the lower-case path spelling rather
+    /// than the `PascalCase` of the specification's examples; the listing still
+    /// yields that device.
+    #[cfg(feature = "camera")]
+    #[tokio::test]
+    async fn get_devices_accepts_a_lower_case_device_type() -> eyre::Result<()> {
+        let app = axum::Router::new().route(
+            "/management/v1/configureddevices",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "ServerTransactionID": 1_u32,
+                    "ErrorNumber": 0_u32,
+                    "ErrorMessage": "",
+                    "Value": [{
+                        "DeviceName": "Lower-case listing",
+                        "DeviceType": "camera",
+                        "DeviceNumber": 0_u32,
+                        "UniqueID": "listed-in-lower-case"
+                    }]
+                }))
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let _server = tokio::spawn(axum::serve(listener, app).into_future());
+
+        let client = Client::new(format!("http://{addr}/"))?;
+        let devices: Vec<TypedDevice> = client.get_devices().await?.collect();
+        let [TypedDevice::Camera(camera)] = devices.as_slice() else {
+            eyre::bail!("expected the one listed camera, got {devices:?}");
+        };
+        eyre::ensure!(
+            camera.unique_id() == "listed-in-lower-case",
+            "bound another device: {camera:?}",
+        );
+        Ok(())
+    }
 }
 
 #[cfg(all(test, feature = "server", feature = "safety_monitor"))]

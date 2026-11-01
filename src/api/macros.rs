@@ -368,13 +368,47 @@ macro_rules! rpc_mod {
             pub use [<$trait_name:snake>]::$trait_name;
         )*
 
-        #[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Debug, derive_more::Display, serde::Serialize, serde::Deserialize)]
+        #[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Debug, derive_more::Display, serde::Serialize)]
         pub(super) enum DeviceType {
             $(
                 # $cfg
                 #[display($path)]
                 $trait_name,
             )*
+        }
+
+        /// A listed `DeviceType` is matched without regard to case.
+        ///
+        /// The Management API describes the field only as one of the supported ASCOM
+        /// device types "such as Telescope, Camera, Focuser"; its lower-case rule is for
+        /// the URL path parameter. Servers write the field either way, `PascalCase` like
+        /// the examples or the path spelling, so each listed name is compared with the
+        /// kind's path name ignoring ASCII case. Serialization is unchanged and keeps the
+        /// `PascalCase` variant names.
+        impl<'de> serde::Deserialize<'de> for DeviceType {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                struct Visitor;
+
+                impl serde::de::Visitor<'_> for Visitor {
+                    type Value = DeviceType;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        formatter.write_str("an ASCOM device type name")
+                    }
+
+                    fn visit_str<E: serde::de::Error>(self, name: &str) -> Result<Self::Value, E> {
+                        match name {
+                            $(
+                                # $cfg
+                                _ if name.eq_ignore_ascii_case($path) => Ok(DeviceType::$trait_name),
+                            )*
+                            _ => Err(E::invalid_value(serde::de::Unexpected::Str(name), &self)),
+                        }
+                    }
+                }
+
+                deserializer.deserialize_str(Visitor)
+            }
         }
 
         /// A tagged enum wrapper for a type-erased instance of a device.
