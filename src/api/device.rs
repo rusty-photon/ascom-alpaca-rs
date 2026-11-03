@@ -83,6 +83,32 @@ pub trait Device: Debug + Send + Sync {
     #[http("connected", method = Put)]
     async fn set_connected(&self, #[http("Connected")] connected: bool) -> ASCOMResult<()>;
 
+    /// Starts connecting to the device and returns without waiting for the connection to complete.
+    ///
+    /// Poll [`Self::connecting`] to find out when the operation has finished.
+    ///
+    /// Device implementations don't need to override this: the server answers it by running
+    /// [`Self::set_connected`] in the background and reporting its progress via `connecting`.
+    ///
+    /// _Platform 7 onward._
+    #[http("connect", method = Put)]
+    async fn connect(&self) -> ASCOMResult<()> {
+        Err(ASCOMError::NOT_IMPLEMENTED)
+    }
+
+    /// Starts disconnecting from the device and returns without waiting for the disconnection to complete.
+    ///
+    /// Poll [`Self::connecting`] to find out when the operation has finished.
+    ///
+    /// Device implementations don't need to override this: the server answers it by running
+    /// [`Self::set_connected`] in the background and reporting its progress via `connecting`.
+    ///
+    /// _Platform 7 onward._
+    #[http("disconnect", method = Put)]
+    async fn disconnect(&self) -> ASCOMResult<()> {
+        Err(ASCOMError::NOT_IMPLEMENTED)
+    }
+
     /// Returns true while the device is connecting or disconnecting.
     ///
     /// _Platform 7 onward._

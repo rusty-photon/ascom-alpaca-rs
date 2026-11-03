@@ -438,8 +438,8 @@ impl Server {
                         }
 
                         // Handle Platform 7 connection methods.
-                        // It doesn't make sense to expose them in public API because our methods, including setters, are already asynchronous,
-                        // so we only need to handle these extra methods for 3rd-party client compatibility.
+                        // Device implementations don't answer these themselves: our methods, including setters, are already asynchronous,
+                        // so the server runs `set_connected` in the background and reports its progress via `connecting`.
                         if action == "connect" || action == "disconnect" {
                             return server_handler.exec(async move |_params| {
                                 let device = devices.get_device_for_server(device_type, device_number)?;
