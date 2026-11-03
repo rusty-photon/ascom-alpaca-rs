@@ -62,3 +62,49 @@ pub(crate) async fn run_proxy_tests<T: ?Sized + crate::api::RetrieavableDevice>(
         tests_result = run_conformu_tests::<T>(server_url, 0) => tests_result,
     }
 }
+
+/// An in-process Alpaca server and the devices it serves, as seen by an Alpaca client.
+///
+/// The server is shut down when this is dropped.
+#[cfg(all(test, feature = "client", feature = "server"))]
+#[derive(Debug)]
+pub(crate) struct TestServer {
+    /// The served devices, as seen through an Alpaca [`Client`](crate::Client).
+    pub(crate) devices: crate::api::Devices,
+    server: tokio::task::JoinHandle<eyre::Result<std::convert::Infallible>>,
+}
+
+#[cfg(all(test, feature = "client", feature = "server"))]
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        self.server.abort();
+    }
+}
+
+/// Serves `devices` from an in-process Alpaca server on a random local port and
+/// returns them as seen through an Alpaca client, so that a test can drive a device
+/// implementation over the real wire protocol.
+#[cfg(all(test, feature = "client", feature = "server"))]
+pub(crate) async fn serve_devices(devices: crate::api::Devices) -> eyre::Result<TestServer> {
+    use crate::api::CargoServerInfo;
+    use crate::{Client, Server};
+    use std::net::Ipv4Addr;
+
+    let server = Server {
+        devices,
+        listen_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+        // Every test gets its own server, and they can't all share the discovery port.
+        discovery_port: None,
+        ..Server::new(CargoServerInfo!())
+    }
+    .bind()
+    .await?;
+
+    let client = Client::new_from_addr(server.listen_addr());
+    let server = tokio::spawn(server.start());
+
+    Ok(TestServer {
+        devices: client.get_devices().await?.collect(),
+        server,
+    })
+}
